@@ -12,7 +12,25 @@ class TimeSeriesAutocorrelation:
                  nlags: Optional[int] = None):
         self.data = self._validate_data(data)
         self.alpha = alpha
-        self.nlags = nlags if nlags is not None else min(int(len(self.data) / 4), 40)
+        n_samples = len(self.data)
+        max_allowed_nlags = n_samples - 1
+
+        if nlags is None:
+            self.nlags = min(int(n_samples / 4), 40, max_allowed_nlags)
+            self._nlags_truncated = False
+            self._requested_nlags = None
+        else:
+            self._requested_nlags = nlags
+            if nlags > max_allowed_nlags:
+                self.nlags = max_allowed_nlags
+                self._nlags_truncated = True
+            elif nlags < 1:
+                self.nlags = 1
+                self._nlags_truncated = True
+            else:
+                self.nlags = nlags
+                self._nlags_truncated = False
+
         self._validate_params()
 
     def _validate_data(self, data: Union[List[float], np.ndarray, pd.Series]) -> np.ndarray:
@@ -41,11 +59,12 @@ class TimeSeriesAutocorrelation:
         if self.alpha <= 0 or self.alpha >= 1:
             raise ValueError("显著性水平 alpha 必须在 (0, 1) 之间")
 
-        if self.nlags < 1:
-            raise ValueError("滞后阶数 nlags 必须至少为 1")
-
-        if self.nlags >= len(self.data):
-            raise ValueError("滞后阶数 nlags 必须小于数据长度")
+        n_samples = len(self.data)
+        if self.nlags < 1 or self.nlags >= n_samples:
+            raise ValueError(
+                f"滞后阶数 nlags 必须在 [1, {n_samples - 1}] 范围内，"
+                f"当前值为 {self.nlags}"
+            )
 
     def compute_acf(self, adjusted: bool = False,
                     fft: bool = True) -> Dict[str, Union[np.ndarray, float, List]]:
@@ -65,7 +84,7 @@ class TimeSeriesAutocorrelation:
         significant = np.abs(acf_values) > np.abs(upper_ci)
         significant_lags = lags[significant].tolist()
 
-        return {
+        result = {
             'acf_values': acf_values.tolist(),
             'lags': lags.tolist(),
             'confidence_interval': {
@@ -75,13 +94,28 @@ class TimeSeriesAutocorrelation:
             },
             'significant_lags': significant_lags,
             'significant_count': len(significant_lags),
-            'nlags': self.nlags
+            'nlags': self.nlags,
+            'nlags_truncated': self._nlags_truncated
         }
+        if self._requested_nlags is not None:
+            result['requested_nlags'] = self._requested_nlags
+
+        return result
 
     def compute_pacf(self, method: str = 'ywadjusted') -> Dict[str, Union[np.ndarray, float, List]]:
+        n_samples = len(self.data)
+
+        if method in ('ywadjusted', 'ywmle', 'ld'):
+            max_pacf_nlags = n_samples // 2 - 1
+        else:
+            max_pacf_nlags = n_samples - 1
+
+        effective_nlags = min(self.nlags, max_pacf_nlags)
+        pacf_truncated = (effective_nlags < self.nlags)
+
         pacf_values, confint = pacf(
             self.data,
-            nlags=self.nlags,
+            nlags=effective_nlags,
             alpha=self.alpha,
             method=method
         )
@@ -93,7 +127,7 @@ class TimeSeriesAutocorrelation:
         significant = np.abs(pacf_values) > np.abs(upper_ci)
         significant_lags = lags[significant].tolist()
 
-        return {
+        result = {
             'pacf_values': pacf_values.tolist(),
             'lags': lags.tolist(),
             'confidence_interval': {
@@ -103,9 +137,16 @@ class TimeSeriesAutocorrelation:
             },
             'significant_lags': significant_lags,
             'significant_count': len(significant_lags),
-            'nlags': self.nlags,
+            'nlags': effective_nlags,
+            'nlags_truncated': self._nlags_truncated or pacf_truncated,
             'method': method
         }
+        if self._requested_nlags is not None:
+            result['requested_nlags'] = self._requested_nlags
+        if pacf_truncated:
+            result['pacf_nlags_limit'] = max_pacf_nlags
+
+        return result
 
     def analyze(self) -> Dict[str, Union[Dict, List, float, int]]:
         acf_result = self.compute_acf()
@@ -113,7 +154,7 @@ class TimeSeriesAutocorrelation:
 
         summary = self._generate_summary(acf_result, pacf_result)
 
-        return {
+        result = {
             'acf': acf_result,
             'pacf': pacf_result,
             'summary': summary,
@@ -125,6 +166,19 @@ class TimeSeriesAutocorrelation:
                 'max': float(np.max(self.data))
             }
         }
+
+        if self._nlags_truncated or acf_result.get('nlags_truncated') or \
+                pacf_result.get('nlags_truncated'):
+            result['nlags_info'] = {
+                'requested_nlags': self._requested_nlags,
+                'acf_nlags': acf_result['nlags'],
+                'pacf_nlags': pacf_result['nlags'],
+                'was_truncated': True,
+                'max_allowed_nlags': len(self.data) - 1,
+                'pacf_nlags_limit': pacf_result.get('pacf_nlags_limit')
+            }
+
+        return result
 
     def _generate_summary(self, acf_result: Dict, pacf_result: Dict) -> Dict:
         acf_vals = np.array(acf_result['acf_values'])

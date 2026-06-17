@@ -214,6 +214,19 @@ class AutocorrelationService:
                     lines.append(f"    是否平稳: {'是' if kpss['is_stationary'] else '否'}")
                     lines.append(f"    临界值: {kpss['critical_values']}")
 
+        if 'nlags_info' in result:
+            ni = result['nlags_info']
+            lines.append("\n【警告: 滞后阶数已调整】")
+            if ni.get('requested_nlags') is not None:
+                lines.append(f"  请求的滞后阶数: {ni['requested_nlags']}")
+            lines.append(f"  ACF 实际使用滞后阶数: {ni['acf_nlags']}")
+            lines.append(f"  PACF 实际使用滞后阶数: {ni['pacf_nlags']}")
+            lines.append(f"  最大允许滞后阶数 (N-1): {ni['max_allowed_nlags']}")
+            if ni.get('pacf_nlags_limit') is not None:
+                lines.append(
+                    f"  PACF 方法限制的最大阶数: {ni['pacf_nlags_limit']}"
+                )
+
         lines.append("\n" + "=" * 60)
         lines.append("注: 标有 * 的滞后阶数表示在显著性水平下显著")
         lines.append("=" * 60)
