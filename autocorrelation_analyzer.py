@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.stattools import acf, pacf
 from statsmodels.tsa.stattools import adfuller, kpss
+from statsmodels.stats.diagnostic import acorr_ljungbox
 from typing import List, Dict, Union, Optional, Tuple
 
 
@@ -336,3 +337,98 @@ class TimeSeriesAutocorrelation:
                 'is_stationary': None,
                 'error': 'KPSS 测试执行失败'
             }
+
+    def ljung_box_test(self, lags: Optional[Union[int, List[int]]] = None,
+                       boxpierce: bool = False) -> Dict[str, Union[Dict, List, bool, str]]:
+        n_samples = len(self.data)
+
+        if lags is None:
+            test_lags = min(self.nlags, n_samples - 1)
+        elif isinstance(lags, int):
+            test_lags = min(lags, n_samples - 1)
+        else:
+            test_lags = [min(l, n_samples - 1) for l in lags]
+
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                lb_result = acorr_ljungbox(
+                    self.data,
+                    lags=test_lags,
+                    boxpierce=boxpierce,
+                    return_df=True
+                )
+
+            results_by_lag = []
+            is_white_noise_all = True
+            significant_lags = []
+
+            for idx, row in lb_result.iterrows():
+                lag = int(idx)
+                lb_stat = float(row['lb_stat'])
+                lb_pvalue = float(row['lb_pvalue'])
+                is_white_noise_lag = bool(lb_pvalue >= self.alpha)
+
+                if not is_white_noise_lag:
+                    is_white_noise_all = False
+                    significant_lags.append(lag)
+
+                lag_result = {
+                    'lag': lag,
+                    'ljung_box_statistic': lb_stat,
+                    'p_value': lb_pvalue,
+                    'is_white_noise': is_white_noise_lag
+                }
+
+                if boxpierce and 'bp_stat' in row and 'bp_pvalue' in row:
+                    lag_result['box_pierce_statistic'] = float(row['bp_stat'])
+                    lag_result['box_pierce_p_value'] = float(row['bp_pvalue'])
+
+                results_by_lag.append(lag_result)
+
+            result = {
+                'alpha': self.alpha,
+                'tested_lags': test_lags if isinstance(test_lags, list) else
+                               list(range(1, test_lags + 1)),
+                'results_by_lag': results_by_lag,
+                'is_white_noise': is_white_noise_all,
+                'significant_lags': significant_lags,
+                'conclusion': self._ljung_box_conclusion(is_white_noise_all, significant_lags)
+            }
+
+            if isinstance(test_lags, int):
+                max_lag = test_lags
+            else:
+                max_lag = max(test_lags)
+
+            if not isinstance(test_lags, list) and len(results_by_lag) > 0:
+                overall = results_by_lag[-1]
+                result['overall'] = {
+                    'lag': max_lag,
+                    'ljung_box_statistic': overall['ljung_box_statistic'],
+                    'p_value': overall['p_value'],
+                    'is_white_noise': overall['is_white_noise']
+                }
+                if boxpierce and 'box_pierce_statistic' in overall:
+                    result['overall']['box_pierce_statistic'] = overall['box_pierce_statistic']
+                    result['overall']['box_pierce_p_value'] = overall['box_pierce_p_value']
+
+            return result
+
+        except Exception as e:
+            return {
+                'alpha': self.alpha,
+                'tested_lags': test_lags if isinstance(test_lags, list) else test_lags,
+                'error': f'Ljung-Box 检验执行失败: {str(e)}',
+                'is_white_noise': None,
+                'conclusion': '检验失败'
+            }
+
+    def _ljung_box_conclusion(self, is_white_noise: bool,
+                              significant_lags: List[int]) -> str:
+        if is_white_noise:
+            return (f"在显著性水平 α={self.alpha} 下，不能拒绝序列为白噪声的原假设，"
+                    f"序列可视为纯随机序列")
+        else:
+            return (f"在显著性水平 α={self.alpha} 下，拒绝序列为白噪声的原假设，"
+                    f"序列存在显著自相关结构（显著滞后阶数: {significant_lags}）")

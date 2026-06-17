@@ -13,7 +13,10 @@ class AutocorrelationService:
     def analyze_from_list(self, data: List[float],
                           alpha: Optional[float] = None,
                           nlags: Optional[int] = None,
-                          include_stationarity: bool = True) -> Dict:
+                          include_stationarity: bool = True,
+                          include_ljung_box: bool = True,
+                          ljung_box_lags: Optional[Union[int, List[int]]] = None,
+                          ljung_box_boxpierce: bool = False) -> Dict:
         alpha = alpha if alpha is not None else self.default_alpha
         nlags = nlags if nlags is not None else self.default_nlags
 
@@ -24,13 +27,22 @@ class AutocorrelationService:
         if include_stationarity:
             result['stationarity'] = analyzer.stationarity_test()
 
+        if include_ljung_box:
+            result['ljung_box'] = analyzer.ljung_box_test(
+                lags=ljung_box_lags,
+                boxpierce=ljung_box_boxpierce
+            )
+
         return result
 
     def analyze_from_json(self, json_input: str,
                           data_key: str = 'data',
                           alpha: Optional[float] = None,
                           nlags: Optional[int] = None,
-                          include_stationarity: bool = True) -> Dict:
+                          include_stationarity: bool = True,
+                          include_ljung_box: bool = True,
+                          ljung_box_lags: Optional[Union[int, List[int]]] = None,
+                          ljung_box_boxpierce: bool = False) -> Dict:
         try:
             parsed = json.loads(json_input)
         except json.JSONDecodeError as e:
@@ -47,8 +59,13 @@ class AutocorrelationService:
         alpha = alpha if alpha is not None else parsed.get('alpha', self.default_alpha)
         nlags = nlags if nlags is not None else parsed.get('nlags', self.default_nlags)
 
-        result = self.analyze_from_list(data, alpha=alpha, nlags=nlags,
-                                        include_stationarity=include_stationarity)
+        result = self.analyze_from_list(
+            data, alpha=alpha, nlags=nlags,
+            include_stationarity=include_stationarity,
+            include_ljung_box=include_ljung_box,
+            ljung_box_lags=ljung_box_lags,
+            ljung_box_boxpierce=ljung_box_boxpierce
+        )
         result['success'] = True
 
         return result
@@ -58,14 +75,22 @@ class AutocorrelationService:
                          has_header: bool = True,
                          alpha: Optional[float] = None,
                          nlags: Optional[int] = None,
-                         include_stationarity: bool = True) -> Dict:
+                         include_stationarity: bool = True,
+                         include_ljung_box: bool = True,
+                         ljung_box_lags: Optional[Union[int, List[int]]] = None,
+                         ljung_box_boxpierce: bool = False) -> Dict:
         try:
             data = self._parse_csv(csv_input, column, has_header)
         except Exception as e:
             return {'error': f'CSV 解析错误: {str(e)}', 'success': False}
 
-        result = self.analyze_from_list(data, alpha=alpha, nlags=nlags,
-                                        include_stationarity=include_stationarity)
+        result = self.analyze_from_list(
+            data, alpha=alpha, nlags=nlags,
+            include_stationarity=include_stationarity,
+            include_ljung_box=include_ljung_box,
+            ljung_box_lags=ljung_box_lags,
+            ljung_box_boxpierce=ljung_box_boxpierce
+        )
         result['success'] = True
 
         return result
@@ -112,7 +137,10 @@ class AutocorrelationService:
                           has_header: bool = True,
                           alpha: Optional[float] = None,
                           nlags: Optional[int] = None,
-                          include_stationarity: bool = True) -> Dict:
+                          include_stationarity: bool = True,
+                          include_ljung_box: bool = True,
+                          ljung_box_lags: Optional[Union[int, List[int]]] = None,
+                          ljung_box_boxpierce: bool = False) -> Dict:
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
@@ -122,18 +150,33 @@ class AutocorrelationService:
             return {'error': f'读取文件错误: {str(e)}', 'success': False}
 
         if file_path.endswith('.json'):
-            return self.analyze_from_json(content, alpha=alpha, nlags=nlags,
-                                          include_stationarity=include_stationarity)
+            return self.analyze_from_json(
+                content, alpha=alpha, nlags=nlags,
+                include_stationarity=include_stationarity,
+                include_ljung_box=include_ljung_box,
+                ljung_box_lags=ljung_box_lags,
+                ljung_box_boxpierce=ljung_box_boxpierce
+            )
         elif file_path.endswith('.csv'):
-            return self.analyze_from_csv(content, column=column, has_header=has_header,
-                                         alpha=alpha, nlags=nlags,
-                                         include_stationarity=include_stationarity)
+            return self.analyze_from_csv(
+                content, column=column, has_header=has_header,
+                alpha=alpha, nlags=nlags,
+                include_stationarity=include_stationarity,
+                include_ljung_box=include_ljung_box,
+                ljung_box_lags=ljung_box_lags,
+                ljung_box_boxpierce=ljung_box_boxpierce
+            )
         else:
             try:
                 data = [float(line.strip()) for line in content.splitlines()
                         if line.strip()]
-                result = self.analyze_from_list(data, alpha=alpha, nlags=nlags,
-                                                include_stationarity=include_stationarity)
+                result = self.analyze_from_list(
+                    data, alpha=alpha, nlags=nlags,
+                    include_stationarity=include_stationarity,
+                    include_ljung_box=include_ljung_box,
+                    ljung_box_lags=ljung_box_lags,
+                    ljung_box_boxpierce=ljung_box_boxpierce
+                )
                 result['success'] = True
                 return result
             except ValueError as e:
@@ -213,6 +256,36 @@ class AutocorrelationService:
                     lines.append(f"    p 值: {kpss['p_value']:.4f}")
                     lines.append(f"    是否平稳: {'是' if kpss['is_stationary'] else '否'}")
                     lines.append(f"    临界值: {kpss['critical_values']}")
+
+        if 'ljung_box' in result:
+            lb = result['ljung_box']
+            lines.append("\n【Ljung-Box 白噪声检验】")
+            if lb.get('error'):
+                lines.append(f"  错误: {lb['error']}")
+            else:
+                lines.append(f"  显著性水平 α: {lb['alpha']}")
+                lines.append(f"  检验结论: {lb['conclusion']}")
+                lines.append(f"  是否为白噪声: {'是' if lb['is_white_noise'] else '否'}")
+                if lb.get('significant_lags'):
+                    lines.append(f"  显著滞后阶数: {lb['significant_lags']}")
+
+                if lb.get('overall'):
+                    ov = lb['overall']
+                    lines.append(f"  总体检验 (滞后 {ov['lag']} 阶):")
+                    lines.append(f"    Ljung-Box 统计量: {ov['ljung_box_statistic']:.4f}")
+                    lines.append(f"    p 值: {ov['p_value']:.4f}")
+                    if 'box_pierce_statistic' in ov:
+                        lines.append(f"    Box-Pierce 统计量: {ov['box_pierce_statistic']:.4f}")
+                        lines.append(f"    Box-Pierce p 值: {ov['box_pierce_p_value']:.4f}")
+
+                if lb.get('results_by_lag'):
+                    lines.append("  各阶详细结果 (前 10 阶):")
+                    for r in lb['results_by_lag'][:10]:
+                        sig = "*" if not r['is_white_noise'] else " "
+                        lines.append(
+                            f"    滞后 {r['lag']:2d}: Q={r['ljung_box_statistic']:8.4f}, "
+                            f"p={r['p_value']:.4f} {sig}"
+                        )
 
         if 'nlags_info' in result:
             ni = result['nlags_info']

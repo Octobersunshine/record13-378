@@ -55,6 +55,22 @@ def main():
         help='不执行平稳性检验'
     )
     parser.add_argument(
+        '--no-ljung-box',
+        action='store_true',
+        help='不执行 Ljung-Box 白噪声检验'
+    )
+    parser.add_argument(
+        '--lb-lags',
+        type=str,
+        default=None,
+        help='Ljung-Box 检验的滞后阶数，可以是单个整数或逗号分隔的列表 (默认: 与 nlags 相同)'
+    )
+    parser.add_argument(
+        '--lb-boxpierce',
+        action='store_true',
+        help='同时执行 Box-Pierce 检验'
+    )
+    parser.add_argument(
         '--json-output',
         action='store_true',
         help='以 JSON 格式输出结果'
@@ -71,6 +87,16 @@ def main():
     service = AutocorrelationService(default_alpha=args.alpha)
 
     include_stationarity = not args.no_stationarity
+    include_ljung_box = not args.no_ljung_box
+
+    lb_lags = None
+    if args.lb_lags:
+        if ',' in args.lb_lags:
+            lb_lags = [int(x.strip()) for x in args.lb_lags.split(',')]
+        else:
+            lb_lags = int(args.lb_lags)
+
+    lb_boxpierce = args.lb_boxpierce
 
     try:
         if args.data:
@@ -79,7 +105,10 @@ def main():
                 data,
                 alpha=args.alpha,
                 nlags=args.nlags,
-                include_stationarity=include_stationarity
+                include_stationarity=include_stationarity,
+                include_ljung_box=include_ljung_box,
+                ljung_box_lags=lb_lags,
+                ljung_box_boxpierce=lb_boxpierce
             )
             result['success'] = True
 
@@ -95,7 +124,10 @@ def main():
                 has_header=not args.no_header,
                 alpha=args.alpha,
                 nlags=args.nlags,
-                include_stationarity=include_stationarity
+                include_stationarity=include_stationarity,
+                include_ljung_box=include_ljung_box,
+                ljung_box_lags=lb_lags,
+                ljung_box_boxpierce=lb_boxpierce
             )
 
         elif args.stdin:
@@ -108,14 +140,20 @@ def main():
                         input_data,
                         alpha=args.alpha,
                         nlags=args.nlags,
-                        include_stationarity=include_stationarity
+                        include_stationarity=include_stationarity,
+                        include_ljung_box=include_ljung_box,
+                        ljung_box_lags=lb_lags,
+                        ljung_box_boxpierce=lb_boxpierce
                     )
                 elif isinstance(parsed, list):
                     result = service.analyze_from_list(
                         parsed,
                         alpha=args.alpha,
                         nlags=args.nlags,
-                        include_stationarity=include_stationarity
+                        include_stationarity=include_stationarity,
+                        include_ljung_box=include_ljung_box,
+                        ljung_box_lags=lb_lags,
+                        ljung_box_boxpierce=lb_boxpierce
                     )
                     result['success'] = True
                 else:
@@ -129,7 +167,10 @@ def main():
                         data,
                         alpha=args.alpha,
                         nlags=args.nlags,
-                        include_stationarity=include_stationarity
+                        include_stationarity=include_stationarity,
+                        include_ljung_box=include_ljung_box,
+                        ljung_box_lags=lb_lags,
+                        ljung_box_boxpierce=lb_boxpierce
                     )
                     result['success'] = True
                 except ValueError as e:
